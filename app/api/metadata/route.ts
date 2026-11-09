@@ -101,7 +101,7 @@ async function indexedAmazonTitle(asin: string): Promise<string> {
       const $=load(html,source.kind==="bing"?{xml:{xmlMode:true}}:undefined);
       const rows:{title:string;link:string}[]=[];
       if(source.kind==="bing"){
-        $("item").slice(0,12).each((_,el)=>rows.push({title:$(el).find("title").text(),link:$(el).find("link").text()}));
+        $("item").slice(0,12).each((_,el)=>{ rows.push({title:$(el).find("title").text(),link:$(el).find("link").text()}); });
       } else {
         $("h3").slice(0,16).each((_,el)=>{
           const anchor=$(el).closest("a");
