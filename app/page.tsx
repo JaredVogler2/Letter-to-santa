@@ -57,7 +57,7 @@ function needsManualName(title: string, url: string): boolean {
     shortCode = decodeURIComponent(target.pathname.split("/").filter(Boolean).pop() || "");
   } catch { return false; }
   if (/^(a\.co|amzn\.to|bit\.ly|tinyurl\.com|t\.co)$/.test(host)) {
-    if (value.toLowerCase() === shortCode.toLowerCase() || (/^[a-z\d_-]{5,18}$/i.test(value) && !/\s/.test(value))) return true;
+    if (value.toLowerCase() === shortCode.toLowerCase()) return true;
   }
   return false;
 }
