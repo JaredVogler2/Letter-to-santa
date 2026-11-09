@@ -177,6 +177,7 @@ export async function buildSantaPdf(data:SantaPdfData,kind:SantaPdfKind):Promise
   let page=doc.addPage([W,H]);background(page);
   let y=0;
   const safeBottom=92;
+  const pageBottoms:number[]=[];
   function heading(label:string,continued=false){
     snowflake(page,96,709,14);
     snowflake(page,510,709,14);
@@ -242,8 +243,15 @@ export async function buildSantaPdf(data:SantaPdfData,kind:SantaPdfKind):Promise
     const titleH=titleLines.length*18.5;
     const noteH=noteLines.length*13;
     const linkH=linkLines.length*12;
-    const cardH=Math.max(118,31+titleH+noteH+linkH+(gift.priority==="top"?12:0));
-    if(y-cardH<safeBottom)newPage();
+    // More compact cards on continuation pages avoid leaving one stranded gift
+    // on a nearly empty last page, without compressing the illustrated cover.
+    let compact=doc.getPageCount()>1;
+    let cardH=Math.max(compact?104:118,31+titleH+noteH+linkH+(gift.priority==="top"?12:0));
+    if(y-cardH<safeBottom){
+      newPage();
+      compact=true;
+      cardH=Math.max(104,31+titleH+noteH+linkH+(gift.priority==="top"?12:0));
+    }
     const top=y,bot=top-cardH;
     // Cream card, fine gold rim, the vertical spacing of the live-preview gift cards.
     page.drawRectangle({
@@ -280,22 +288,37 @@ export async function buildSantaPdf(data:SantaPdfData,kind:SantaPdfKind):Promise
     if(qr)page.drawImage(qr,{x:qrX+2,y:qrY+4,width:76,height:76});
     centered(page,"SCAN ME",helvBold,6.7,qrY-1,C.muted,qrX+40);
     addLink(doc,page,gift.url,qrX-2,qrY-4,85,88);
-    y=bot-13;
+    pageBottoms[doc.getPageCount()-1]=bot;
+    y=bot-(compact?9:13);
   }
   for(let i=0;i<data.gifts.length;i++)drawGift(data.gifts[i],i);
   if(kind==="letter"){
-    if(y<155)newPage("A Letter with Love");
-    y-=5;
-    page.drawText("Thank you, Santa!",{x:104,y,font:italic,size:21,color:C.burgundy});
-    y-=26;
-    page.drawText("With love,",{x:104,y,font:italic,size:14,color:C.muted});
-    y-=25;
-    page.drawText(name,{x:106,y,font:boldItalic,size:21,color:C.burgundy});
-    star(page,105+Math.min(220,boldItalic.widthOfTextAtSize(name,21))+16,y+9,6,C.red);
+    if(y<120)newPage("A Letter with Love");
+    if(y<165){
+      // A two-line signature fits below a full continuation page.
+      y-=3;
+      page.drawText("Thank you, Santa!",{x:104,y,font:italic,size:18,color:C.burgundy});
+      y-=25;
+      const closing="With love, "+name;
+      page.drawText(closing,{x:104,y,font:boldItalic,size:17,color:C.burgundy});
+      star(page,112+Math.min(280,boldItalic.widthOfTextAtSize(closing,17))+13,y+9,4.5,C.red);
+    } else {
+      y-=5;
+      page.drawText("Thank you, Santa!",{x:104,y,font:italic,size:21,color:C.burgundy});
+      y-=26;
+      page.drawText("With love,",{x:104,y,font:italic,size:14,color:C.muted});
+      y-=25;
+      page.drawText(name,{x:106,y,font:boldItalic,size:21,color:C.burgundy});
+      star(page,105+Math.min(220,boldItalic.widthOfTextAtSize(name,21))+16,y+9,6,C.red);
+    }
   }
   const pages=doc.getPages();
   for(let i=0;i<pages.length;i++){
     const p=pages[i];
+    if(i<pages.length-1 && (pageBottoms[i]??0)>139){
+      centered(p,"More wishes on the next page...",italic,11,107,C.gold);
+      star(p,169,111,3,C.gold);star(p,441,111,3,C.gold);
+    }
     centered(p,"from the heart to the North Pole",italic,9,68,C.gold);
     p.drawText("Page "+(i+1)+" / "+pages.length,{
       x:486,y:69,font:helv,size:7.7,color:C.muted
