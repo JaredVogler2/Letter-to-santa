@@ -7,6 +7,7 @@
 
 /* Gift descriptions and real tappable URLs: visible on phone, in PDF, and in a browser email. */
 .missingGiftName{color:#a33234!important;font-style:italic}
+.asinSearch{display:block;color:#285b76;font-weight:800;font-size:11px;padding:8px 0;text-decoration:underline}
 .amazonHint{margin:8px 1px 0;color:#765e48;font-size:10px;line-height:1.5}
 .listTools{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
 .listTools .textAction{font-size:10px;background:#fffaf3;border-radius:5px;padding:5px 8px}
