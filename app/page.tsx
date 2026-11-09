@@ -37,6 +37,7 @@ function parseGiftPaste(raw: string): {url: string|null; sharedTitle: string} {
     const title = lines.find(x =>
       x.length >= 9 && x.length <= 180
       && !/^(?:amazon(?:\.com)?|shop|copy link|share|check this out|check out this product|view on amazon|link)$/i.test(x)
+      && !/^(?:check out|take a look|found this|i found|view this|see this|shop now).*amazon/i.test(x)
       && !/^https?:/i.test(x)
     ) || "";
     return {url, sharedTitle:title};
@@ -178,7 +179,7 @@ export default function Home() {
         lookupWarning = result.warning || "";
       }
     } catch { /* Links remain valid even if the retailer blocks its metadata. */ }
-    if (parsed.sharedTitle && needsManualName(title,url)) {
+    if (parsed.sharedTitle && (source !== "page" || needsManualName(title,url))) {
       title=cleanGiftTitle(parsed.sharedTitle,url);
       if (title !== NAME_NEEDED) source = "shared-text";
     }
