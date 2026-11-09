@@ -8,14 +8,16 @@ A festive mobile-friendly Christmas letter builder. Paste a gift URL, retrieve i
 ## Features
 
 - Child's first name, optional age, and custom note for Santa
-- Paste HTTPS gift links; best-effort automatic product title and image extraction
-- Fallback manual title editing for retailers that block metadata lookup
+- Paste HTTPS gift links; best-effort automatic product title, description and image extraction
+- Fallback manual name and description editing for retailers that block metadata lookup (including Amazon short links); no misleading random URL tokens as names
 - Edit a gift's name, size/color note and top-wish priority; reorder or remove entries
 - One real QR code per gift, encoding the actual product URL
-- Live letter preview and printable festive stationery design
+- Live letter preview with gift descriptions and full, clickable HTTPS product URLs beneath each gift, alongside the QR codes
+- Links retained as anchors in the browser print/PDF layout for phone-friendly access
 - Print the letter or select Save as PDF in the browser's print dialog
 - Separate parent shopping sheet with direct product links and larger QR codes
-- Copy all gift names and links
+- Email a prefilled wish list with descriptions and tappable product links, or copy the entire list into an email
+- Copy all gift names, descriptions and links
 - Browser-local saving, no user accounts or remote wish-list database
 
 ## Run
@@ -48,7 +50,8 @@ Wish lists and child names are saved only in this browser's localStorage; no acc
 
 ## Check before seasonal use
 
-- Create an actual wishlist and ensure each gift QR opens the correct site.
+- Create an actual wishlist and ensure each gift QR and the clickable printed/PDF URL open the correct site.
+- Test an Amazon a.co short URL that returns no product metadata; confirm a clear editing prompt instead of a fabricated product title.
 - Edit, reorder, remove, refresh and check saved data.
 - Save both printable formats as PDFs and scan the printed QR codes.
 - Check small mobile screens, desktop screens and the main-site proxy URL.
