@@ -1,24 +1,29 @@
 import {NextResponse} from "next/server";
+import {load} from "cheerio";
 export const runtime="nodejs";
 export const dynamic="force-dynamic";
-const asin="B0DXKQ4Z8Q";
 export async function GET(){
- const q=encodeURIComponent(asin+" Amazon");
- const sites=[
-  "https://www.bing.com/search?format=rss&q="+q,
-  "https://www.google.com/search?hl=en&q="+q,
-  "https://www.google.com/search?udm=14&q="+q,
-  "https://search.yahoo.com/search?p="+q,
-  "https://www.amazon.com/VAGUDE-Extension-Dresser-Cabinet-Replacement/dp/"+asin
+ const queries=[
+  "B0DXKQ4Z8Q",
+  '"B0DXKQ4Z8Q" amazon',
+  'site:amazon.com/dp/B0DXKQ4Z8Q',
+  "VAGUDE Extension Dresser Cabinet Replacement"
  ];
- const output=await Promise.all(sites.map(async url=>{
+ const sites=[
+  "https://search.yahoo.com/search?p=",
+  "https://www.bing.com/search?format=rss&q="
+ ];
+ const result=await Promise.all(queries.flatMap(query=>sites.map(async base=>{
+  const url=base+encodeURIComponent(query);
   try{
-   const r=await fetch(url,{cache:"no-store",redirect:"manual",signal:AbortSignal.timeout(6500),headers:{"User-Agent":"Mozilla/5.0","Accept":"text/html,application/xml,application/rss+xml"}});
-   const s=(await r.text()).slice(0,15000);
-   const titles=(s.match(/<title[^>]*>[^<]{10,180}<\/title>/gi)||[]).slice(0,7);
-   const items=s.match(/<item>[\s\S]{0,2500}/i)?.[0]?.slice(0,1500);
-   return {host:new URL(url).hostname,status:r.status,ctype:r.headers.get("content-type"),length:s.length,titles,items,containsAsin:s.includes(asin),start:s.slice(0,100)};
-  }catch(e){return {host:new URL(url).hostname,error:String(e)}}
- }));
- return NextResponse.json(output,{headers:{"Cache-Control":"no-store"}});
+   const response=await fetch(url,{cache:"no-store",signal:AbortSignal.timeout(6000),headers:{"User-Agent":"Mozilla/5.0","Accept":"text/html,application/xml,application/rss+xml"}});
+   const raw=(await response.text()).slice(0,70000);
+   const $=load(raw,{xml:{xmlMode:raw.startsWith("<?xml")}});
+   const results=base.includes("yahoo")
+     ? $("h3").slice(0,8).map((_,el)=>({title:$(el).text().trim().slice(0,140),html:$(el).parent("a").attr("href")?.slice(0,300) || $(el).closest("a").attr("href")?.slice(0,300)})).get()
+     : $("item").slice(0,8).map((_,el)=>({title:$(el).find("title").text().slice(0,140),link:$(el).find("link").text().slice(0,300)})).get();
+   return {query,engine:base.includes("yahoo")?"yahoo":"bing",status:response.status,results,foundAsin:raw.includes("B0DXKQ4Z8Q")};
+  }catch(e){return {query,url,error:String(e)}}
+ })));
+ return NextResponse.json(result,{headers:{"Cache-Control":"no-store"}});
 }
