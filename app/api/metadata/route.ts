@@ -47,6 +47,18 @@ async function validateUrl(raw: string): Promise<URL> {
 function tidy(value: string | undefined | null, max = 180) {
   return (value || "").replace(/\s+/g, " ").trim().slice(0, max);
 }
+function cleanDescription(value: string | undefined | null) {
+  if (!value) return "";
+  // Product JSON-LD sometimes contains embedded HTML. Render only readable text.
+  return tidy(load("<div>" + value + "</div>")("div").text(), 350);
+}
+function cleanTitle(value: string | undefined | null) {
+  const title = tidy(value);
+  // Landing-page labels, access errors and bot blocks are not product names.
+  if (/^(amazon(?:\.[a-z]{2,4})+|a\.co|amzn\.to|access denied|just a moment|robot check|page not found)[\s:.,!-]*$/i.test(title) ||
+      /^(404|captcha|are you a robot|something went wrong)/i.test(title)) return "";
+  return title;
+}
 
 async function downloadHtml(raw: string) {
   let current = raw;
@@ -94,7 +106,7 @@ async function downloadHtml(raw: string) {
 function structuredProduct(raw: string) {
   try {
     const parsed: unknown = JSON.parse(raw);
-    const find = (value: unknown, depth = 0): { name?: string; image?: string } | null => {
+    const find = (value: unknown, depth = 0): { name?: string; image?: string; description?: string } | null => {
       if (!value || typeof value !== "object" || depth > 5) return null;
       if (Array.isArray(value)) {
         for (const item of value) { const hit = find(item, depth + 1); if (hit) return hit; }
@@ -105,7 +117,11 @@ function structuredProduct(raw: string) {
       if (type === "Product" || (Array.isArray(type) && type.includes("Product"))) {
         const image = typeof o.image === "string" ? o.image
           : Array.isArray(o.image) ? (o.image.find(x => typeof x === "string") as string | undefined) : undefined;
-        return { name: typeof o.name === "string" ? o.name : undefined, image };
+        return {
+          name: typeof o.name === "string" ? o.name : undefined,
+          image,
+          description: typeof o.description === "string" ? o.description : undefined
+        };
       }
       return find(o["@graph"], depth + 1);
     };
@@ -120,15 +136,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Enter a product link." }, { status: 400 });
     const { html, finalUrl } = await downloadHtml((body as {url: string}).url);
     const $ = load(html);
-    let product: {name?:string;image?:string} | null = null;
+    let product: {name?:string;image?:string;description?:string} | null = null;
     $('script[type="application/ld+json"]').slice(0, 15).each((_, el) => {
       if (!product) product = structuredProduct($(el).html() || "");
     });
-    const structured = product as {name?:string;image?:string} | null;
-    const title = tidy(structured?.name ||
+    const structured = product as {name?:string;image?:string;description?:string} | null;
+    const title = cleanTitle(structured?.name ||
+      $('[id="productTitle"]').first().text() ||
       $('meta[property="og:title"]').attr("content") ||
       $('meta[name="twitter:title"]').attr("content") ||
       $("title").first().text());
+    const description = cleanDescription(structured?.description ||
+      $('meta[property="og:description"]').attr("content") ||
+      $('meta[name="twitter:description"]').attr("content") ||
+      $('meta[name="description"]').attr("content") ||
+      $('[itemprop="description"]').first().text());
     const image = tidy(structured?.image ||
       $('meta[property="og:image"]').attr("content") ||
       $('meta[name="twitter:image"]').attr("content"), 2000);
@@ -140,7 +162,7 @@ export async function POST(request: NextRequest) {
           imageUrl = parsedImage.toString();
       }
     } catch { /* image optional */ }
-    return NextResponse.json({ title: title || "", image: imageUrl, url: finalUrl }, {
+    return NextResponse.json({ title: title || "", description, image: imageUrl, url: finalUrl }, {
       headers: { "Cache-Control": "no-store" }
     });
   } catch (error) {
