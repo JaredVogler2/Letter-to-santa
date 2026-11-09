@@ -3,7 +3,15 @@
 import { useEffect, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 
-type Gift = { id: string; url: string; title: string; description: string; image: string; note: string; priority: "top" | "wish" };
+type Gift = {
+  id: string; url: string; title: string; description: string; image: string; note: string;
+  priority: "top" | "wish";
+  resolvedUrl?: string; asin?: string; source?: "page" | "url-hint" | "shared-text" | "unavailable" | "manual";
+};
+type GiftLookup = {
+  title?: string; description?: string; image?: string; resolvedUrl?: string; asin?: string;
+  source?: "page" | "url-hint" | "unavailable"; warning?: string; error?: string
+};
 type LetterData = { name: string; age: string; message: string; gifts: Gift[] };
 type PrintMode = "letter" | "shop";
 const STORAGE = "letter-to-santa-v1";
@@ -14,6 +22,27 @@ function safeUrl(raw: string) {
   catch { return null; }
 }
 function domain(url: string) { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return "Gift website"; } }
+function isAmazonGift(url: string) {
+  try { return /^(?:a\.co|amzn\.to|amzn\.eu|amzn\.asia|amzn\.com|(?:www\.)?amazon\.(?:com|co\.[a-z]{2}|com\.[a-z]{2}|[a-z]{2,3}))$/i.test(new URL(url).hostname); }
+  catch { return false; }
+}
+function parseGiftPaste(raw: string): {url: string|null; sharedTitle: string} {
+  const trimmed = raw.trim();
+  const tokens = trimmed.match(/https:\/\/[^\s<>"']+/gi) || [];
+  for(const token of tokens) {
+    const url = safeUrl(token.replace(/[.,;!?)\]}]+$/,""));
+    if(!url) continue;
+    const left = trimmed.replace(token," ").replace(/https:\/\/[^\s<>"']+/gi," ");
+    const lines = left.split(/[\n\r]+/).map(x=>x.trim().replace(/^[\s"'•*-]+|[\s"'•*-]+$/g,"")).filter(Boolean);
+    const title = lines.find(x =>
+      x.length >= 9 && x.length <= 180
+      && !/^(?:amazon(?:\.com)?|shop|copy link|share|check this out|check out this product|view on amazon|link)$/i.test(x)
+      && !/^https?:/i.test(x)
+    ) || "";
+    return {url, sharedTitle:title};
+  }
+  return {url:safeUrl(trimmed),sharedTitle:""};
+}
 function newId() { return globalThis.crypto?.randomUUID?.() || String(Date.now()) + "-" + Math.random().toString(36).slice(2); }
 const NAME_NEEDED = "Gift name needed";
 function needsManualName(title: string, url: string): boolean {
@@ -72,7 +101,10 @@ export default function Home() {
               url: g.url, title: cleanGiftTitle(String(g.title || ""),g.url),
               description: String(g.description || "").slice(0,350),
               image: String(g.image || "").slice(0,2000), note: String(g.note || "").slice(0,160),
-              priority: g.priority === "top" ? "top" : "wish"
+              priority: g.priority === "top" ? "top" : "wish",
+              resolvedUrl: typeof g.resolvedUrl === "string" ? g.resolvedUrl : undefined,
+              asin: typeof g.asin === "string" ? g.asin : undefined,
+              source: g.source
             }))
           });
         }
@@ -122,28 +154,44 @@ export default function Home() {
   async function addGift(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (busy) return;
-    const url = safeUrl(urlInput);
+    const parsed = parseGiftPaste(urlInput);
+    const url = parsed.url;
     if (!url) { setNotice("Paste a full HTTPS link to a gift, then try again."); return; }
     if (data.gifts.length >= 50) { setNotice("A letter can contain up to 50 gifts."); return; }
     if (data.gifts.some(g => g.url === url)) { setNotice("That gift is already on the list."); return; }
     setBusy(true); setNotice("");
-    let title = NAME_NEEDED, image = "", description = "";
+    let title = NAME_NEEDED, image = "", description = "", resolvedUrl = "", asin = "";
+    let source: Gift["source"] = "unavailable";
+    let lookupWarning = "";
     try {
       const response = await fetch("/letter-to-santa/api/metadata", {
         method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({url})
       });
-      const result: {title?:string;description?:string;image?:string;error?:string} = await response.json();
+      const result: GiftLookup = await response.json();
       if (response.ok) {
         title = cleanGiftTitle(result.title || "", url);
         description = (result.description || "").slice(0,350);
         image = result.image || "";
+        resolvedUrl = result.resolvedUrl || "";
+        asin = result.asin || "";
+        source = result.source || "unavailable";
+        lookupWarning = result.warning || "";
       }
-    } catch { /* Retailer metadata is best-effort. Never generate names from opaque short URLs. */ }
+    } catch { /* Links remain valid even if the retailer blocks its metadata. */ }
+    if (parsed.sharedTitle && needsManualName(title,url)) {
+      title=cleanGiftTitle(parsed.sharedTitle,url);
+      if (title !== NAME_NEEDED) source = "shared-text";
+    }
     const id = newId();
-    setData(current => ({ ...current, gifts: [...current.gifts, {id,url,title,description,image,note:"",priority:"wish"}] }));
+    setData(current => ({ ...current, gifts: [...current.gifts, {
+      id,url,title,description,image,note:"",priority:"wish",resolvedUrl,asin,source
+    }] }));
     if (title === NAME_NEEDED) {
       setEditing(id);
-      setNotice("This store did not provide a product name. Edit the new gift below to add its name and description.");
+      setNotice("Amazon's share link was saved and will work for shopping, but Amazon did not reveal the product name. Open the gift and type its name below.");
+    } else if (source === "url-hint") {
+      setEditing(id);
+      setNotice(lookupWarning || "The name came from the Amazon link, not verified product metadata. Please check it.");
     } else if (!description) {
       setEditing(id);
       setNotice("Gift added! Add an optional description to help family recognize the exact item.");
@@ -156,18 +204,55 @@ export default function Home() {
       const response = await fetch("/letter-to-santa/api/metadata", {
         method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({url:gift.url})
       });
-      const result: {title?:string;description?:string;image?:string;error?:string} = await response.json();
+      const result: GiftLookup = await response.json();
       if (!response.ok) throw new Error(result.error || "The store blocked product lookup.");
       const newName = cleanGiftTitle(result.title || "",gift.url);
       const patch: Partial<Gift> = {};
-      if (newName !== NAME_NEEDED && (gift.title === NAME_NEEDED || needsManualName(gift.title,gift.url))) patch.title=newName;
+      if (newName !== NAME_NEEDED && (gift.title === NAME_NEEDED || needsManualName(gift.title,gift.url))) {
+        patch.title=newName; patch.source=result.source;
+      }
       if (result.description && !gift.description.trim()) patch.description=result.description.slice(0,350);
       if (result.image && !gift.image) patch.image=result.image;
+      if (result.resolvedUrl && result.resolvedUrl !== gift.resolvedUrl) patch.resolvedUrl=result.resolvedUrl;
+      if (result.asin && result.asin !== gift.asin) patch.asin=result.asin;
       if (Object.keys(patch).length) updateGift(gift.id,patch);
-      setNotice(Object.keys(patch).length ? "Updated available gift details." : "No new details found. You can enter the gift name and description yourself.");
+      setNotice(newName === NAME_NEEDED
+        ? "Amazon's link is saved, but its catalog blocked product details. Add the name manually."
+        : result.source === "url-hint" ? "A name was inferred from the Amazon URL; check that it matches the gift."
+        : Object.keys(patch).length ? "Updated available gift details." : "No new details found.");
     } catch {
       setNotice("The store did not provide product details. Please enter a gift name and description manually.");
     } finally { setBusy(false); setEditing(gift.id); }
+  }
+  async function recoverAllMissing() {
+    const missing = data.gifts.filter(g => isAmazonGift(g.url) && (needsManualName(g.title,g.url) || !g.description));
+    if(!missing.length) { setNotice("No Amazon gifts need recovery."); return; }
+    setBusy(true); setNotice("Checking previously saved Amazon links…");
+    let improved=0,unavailable=0;
+    for (const gift of missing.slice(0,12)) {
+      try {
+        const response = await fetch("/letter-to-santa/api/metadata", {
+          method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:gift.url})
+        });
+        const info:GiftLookup=await response.json();
+        if(!response.ok) {unavailable++;continue;}
+        const patch:Partial<Gift>={};
+        const name=cleanGiftTitle(info.title||"",gift.url);
+        if(needsManualName(gift.title,gift.url) && name!==NAME_NEEDED) {
+          patch.title=name;patch.source=info.source;
+        }
+        if(!gift.description && info.description) patch.description=info.description.slice(0,350);
+        if(!gift.image && info.image)patch.image=info.image;
+        if(info.asin)patch.asin=info.asin;
+        if(info.resolvedUrl)patch.resolvedUrl=info.resolvedUrl;
+        if(Object.keys(patch).length)updateGift(gift.id,patch);
+        if(patch.title||patch.description)improved++;else unavailable++;
+      } catch {unavailable++; }
+    }
+    setBusy(false);
+    setNotice(improved
+      ? "Recovered gift details for " + improved + " link(s). " + unavailable + " still need manual names or descriptions."
+      : "No new names or descriptions were available. Amazon may be blocking catalog data; your existing gift URLs are preserved.");
   }
   async function pasteLink() {
     try { const value = await navigator.clipboard.readText(); setUrlInput(value.trim()); }
@@ -240,16 +325,17 @@ export default function Home() {
         <div className="sectionHead"><div><span className="stepLabel">STEP 02 / THE WISH LIST</span><h2><span aria-hidden="true">🎁</span> Add a Christmas wish</h2><p>Paste a product link. We’ll try to find its name and make a QR code automatically.</p></div></div>
         <form className="addGiftForm" onSubmit={addGift}>
           <label htmlFor="product-url">Product website link</label>
-          <div className="urlInputWrap"><span aria-hidden="true">🔗</span><input id="product-url" type="url" inputMode="url" autoComplete="url" required placeholder="https://www.example.com/product/..." value={urlInput} onChange={e => setUrlInput(e.target.value)} /></div>
+          <div className="urlInputWrap"><span aria-hidden="true">🔗</span><input id="product-url" type="text" inputMode="url" autoComplete="off" required placeholder="Paste an Amazon a.co/d/ link or product share text" value={urlInput} onChange={e => setUrlInput(e.target.value)} /></div>
+          <p className="amazonHint">Amazon short links are supported. If the shop blocks details, keep the link and add a name. You can also paste a share message that includes the gift title.</p>
           <div className="addActions"><button className="pasteBtn" type="button" onClick={pasteLink}><Symbol name="copy"/> Paste link</button><button className="primaryBtn" type="submit" disabled={busy}><Symbol name="magic"/> {busy ? "Finding the gift…" : "Add to my list"} <span aria-hidden="true">→</span></button></div>
         </form>
         {notice && <div className="notice" role="status">{notice} <button type="button" onClick={() => setNotice("")} aria-label="Dismiss notification">×</button></div>}
-        <div className="wishListHeader"><div><span className="stepLabel">YOUR CHRISTMAS WISHES</span><h3>My wish list <b>{data.gifts.length}</b></h3></div>{data.gifts.length > 0 && <button type="button" className="textAction" onClick={copyList}><Symbol name="copy"/> Copy links</button>}</div>
+        <div className="wishListHeader"><div><span className="stepLabel">YOUR CHRISTMAS WISHES</span><h3>My wish list <b>{data.gifts.length}</b></h3></div>{data.gifts.length > 0 && <div className="listTools"><button type="button" className="textAction" onClick={recoverAllMissing} disabled={busy}>↻ Retry Amazon details</button><button type="button" className="textAction" onClick={copyList}><Symbol name="copy"/> Copy links</button></div>}</div>
         {!data.gifts.length && <div className="emptyState"><span>🎄</span><strong>The wish list starts here.</strong><p>Find something wonderful online, copy the link, and paste it above.</p></div>}
         <div className="giftList">{data.gifts.map((gift,i) => <article className="giftCard" key={gift.id}>
           <div className="giftCardMain">
             <div className="giftIndex">{String(i+1).padStart(2,"0")}</div><div className="giftPic"><GiftIllustration gift={gift}/></div>
-            <div className="giftInfo"><h4 className={gift.title === NAME_NEEDED ? "missingGiftName" : ""}>{gift.title}</h4>{gift.description && <p className="giftInfoDescription">{gift.description}</p>}<small>{domain(gift.url)}</small><a href={gift.url} target="_blank" rel="noopener noreferrer" className="giftLink">Open gift <Symbol name="arrow"/></a></div>
+            <div className="giftInfo"><h4 className={gift.title === NAME_NEEDED ? "missingGiftName" : ""}>{gift.title}</h4>{gift.description && <p className="giftInfoDescription">{gift.description}</p>}<small>{domain(gift.url)}{gift.asin ? " · ASIN " + gift.asin : ""}</small>{gift.source === "url-hint" && <small className="inferredHint">⚠ Name inferred from link — please verify</small>}<a href={gift.url} target="_blank" rel="noopener noreferrer" className="giftLink">Open gift <Symbol name="arrow"/></a></div>
             <div className="giftQrSmall"><GiftQR gift={gift} size={66}/></div>
           </div>
           <div className="giftCardTools"><button type="button" onClick={() => setEditing(editing === gift.id ? null : gift.id)}>{editing === gift.id ? "Done editing" : "✎ Edit gift"}</button><button type="button" onClick={() => moveGift(gift.id,-1)} disabled={i===0} aria-label={"Move " + gift.title + " up"}>↑</button><button type="button" onClick={() => moveGift(gift.id,1)} disabled={i===data.gifts.length-1} aria-label={"Move " + gift.title + " down"}>↓</button><button type="button" className="deleteBtn" onClick={() => removeGift(gift.id)} aria-label={"Remove " + gift.title}>✕</button></div>
@@ -258,7 +344,7 @@ export default function Home() {
           <label className="field"><span>Extra details <small>(size, color, etc.)</small></span><input maxLength={160} placeholder="e.g. Blue, size 5" value={gift.note} onChange={e=>updateGift(gift.id,{note:e.target.value})}/></label>
           <label className="field"><span>Wish importance</span><select value={gift.priority} onChange={e=>updateGift(gift.id,{priority:e.target.value as Gift["priority"]})}><option value="wish">Would love</option><option value="top">Top wish ★</option></select></label>
           <button className="outlineBtn refreshDetails" type="button" disabled={busy} onClick={()=>refreshGift(gift)}>↻ Try extracting product details again</button>
-          <div className="editUrlHint">Link in the letter: <a href={gift.url} target="_blank" rel="noopener noreferrer">{gift.url}</a></div>
+          <div className="editUrlHint">Shopping link: <a href={gift.url} target="_blank" rel="noopener noreferrer">{gift.url}</a>{gift.asin && <p>Amazon product ID: <strong>{gift.asin}</strong></p>}{gift.resolvedUrl && gift.resolvedUrl !== gift.url && <p>Resolved destination: <a href={gift.resolvedUrl} target="_blank" rel="noopener noreferrer">{gift.resolvedUrl}</a></p>}<p>If Amazon blocks product details, open the link, copy the product name, and paste it above. The QR code will still link to the gift.</p></div>
           </div>}
         </article>)}</div>
         <div className="actionPanel">
