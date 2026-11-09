@@ -6,6 +6,16 @@
 .shoppingPaper{background:white;padding:35px;max-width:850px;margin:auto;font-family:Georgia,serif;color:#34302b}.shoppingTop{color:#a4773e;font:800 11px "DM Sans",sans-serif;letter-spacing:2px;text-align:center}.shoppingPaper h1{text-align:center;font-size:35px;color:#8e2834;margin:10px 0}.shoppingIntro{text-align:center;max-width:570px;margin:0 auto 25px;font-size:13px;line-height:1.6}.shoppingRows{display:grid;gap:10px}.shoppingRow{border:1px solid #e7d7bf;display:flex;gap:14px;align-items:center;padding:12px;break-inside:avoid;page-break-inside:avoid}.shoppingNum{font:700 14px "DM Sans",sans-serif;color:#ad8f65}.shoppingDetails{flex:1;min-width:0}.shoppingDetails h2{font-size:18px;color:#7e2c32;overflow-wrap:anywhere;margin:0 0 5px}.shoppingDetails h2 span{font:700 10px "DM Sans",sans-serif;color:#b18944}.shoppingDetails p{font:12px "DM Sans",sans-serif;margin:4px 0;color:#665b50}.printedUrl{font:10px "DM Sans",sans-serif;color:#8b7053;overflow-wrap:anywhere;max-width:560px}.shoppingFooter{text-align:center;color:#ad9370;font-size:10px;margin-top:25px}
 
 /* Gift descriptions and real tappable URLs: visible on phone, in PDF, and in a browser email. */
+
+.pdfReadyPanel{margin-top:16px;padding:16px;background:#f4f8f2;border:1px solid #a9c4a6;border-radius:11px;color:#254839}
+.pdfReadyPanel strong{font:800 13px "DM Sans",sans-serif;display:block;margin-bottom:13px}
+.pdfReadyActions{display:flex;flex-wrap:wrap;gap:8px}
+.pdfReadyActions>.primaryBtn,.pdfReadyActions>.outlineBtn{flex:1 1 120px;display:inline-flex;align-items:center;justify-content:center;min-height:43px;font-size:12px;line-height:1.35;text-align:center}
+.pdfReadyPanel p{font-size:11px;color:#466152;line-height:1.65;margin:12px 0 0}
+.pdfPlatformHint{font-size:10px;color:#806f5b;margin:11px 0 0;text-align:center;line-height:1.45}
+.previewColumn>.pdfReadyPanel{margin:15px 0 0}
+@media(max-width:390px){.pdfReadyActions{flex-direction:column}.pdfReadyActions>a,.pdfReadyActions>button{width:100%}}
+
 .missingGiftName{color:#a33234!important;font-style:italic}
 .asinSearch{display:block;color:#285b76;font-weight:800;font-size:11px;padding:8px 0;text-decoration:underline}
 .amazonHint{margin:8px 1px 0;color:#765e48;font-size:10px;line-height:1.5}
