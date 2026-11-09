@@ -16,8 +16,10 @@ A festive mobile-friendly Christmas letter builder. Paste a gift URL, retrieve i
 - One real QR code per gift, encoding the actual product URL
 - Live letter preview with gift descriptions and full, clickable HTTPS product URLs beneath each gift, alongside the QR codes
 - Links retained as anchors in the browser print/PDF layout for phone-friendly access
-- Print the letter or select Save as PDF in the browser's print dialog
-- Separate parent shopping sheet with direct product links and larger QR codes
+- Generate a real downloadable PDF directly in the browser (no `window.print()`), with embedded QR PNGs and clickable PDF URL annotations
+- Choose **Download PDF** (Android Chrome/Samsung Internet), **Open PDF** (iOS Safari viewer → Share → Save to Files / Print), or **Share PDF** (when the device supports file sharing)
+- Both the Santa letter and parent shopping guide support letter-size multi-page PDF export for long wish lists
+- Separate parent shopping PDF with direct product links and QR codes
 - Email a prefilled wish list with descriptions and tappable product links, or copy the entire list into an email
 - Copy all gift names, descriptions and links
 - Browser-local saving, no user accounts or remote wish-list database
@@ -48,7 +50,7 @@ The parent website repository JaredVogler2/Jaredvoglercom has a Side Quest page,
 
 ## Privacy and limitations
 
-Wish lists and child names are saved only in this browser's localStorage; no accounts or database. A pasted URL alone is submitted to the metadata endpoint, where the server briefly requests the retailer website. For Amazon links, when the retailer page is blocked, the server may search a public Yahoo/Bing listing using **only the ASIN**; neither the child's name nor the entire list is sent to the search provider. Retailers may log those requests. The endpoint validates HTTPS URLs, DNS addresses, redirects and response size/timeouts to reduce unsafe outbound requests. The product title and image are best effort: shops may block automated lookup or hotlinked images, so manual editing is essential. QR codes contain submitted URLs and are generated locally with no shortener. The PDF save button uses browser printing; choose Save as PDF. Browser storage doesn't synchronize between devices.
+Wish lists and child names are saved only in this browser's localStorage; no accounts or database. A pasted URL alone is submitted to the metadata endpoint, where the server briefly requests the retailer website. For Amazon links, when the retailer page is blocked, the server may search a public Yahoo/Bing listing using **only the ASIN**; neither the child's name nor the entire list is sent to the search provider. Retailers may log those requests. The endpoint validates HTTPS URLs, DNS addresses, redirects and response size/timeouts to reduce unsafe outbound requests. The product title and image are best effort: shops may block automated lookup or hotlinked images, so manual editing is essential. QR codes contain submitted URLs and are generated locally with no shortener. The PDF buttons use an in-browser PDF generator and provide real PDF links; no print dialog is required. If an in-app browser blocks the links, open the website in Safari, Samsung Internet, or Chrome. Browser storage doesn't synchronize between devices.
 
 ## Check before seasonal use
 
@@ -56,5 +58,5 @@ Wish lists and child names are saved only in this browser's localStorage; no acc
 - Test an Amazon a.co short URL that redirects to an Amazon ASIN; confirm a title is retrieved only from a result whose Amazon link contains the exact matching ASIN.
 - If Amazon and indexed listings do not provide an actual product title, confirm a clear editing prompt instead of a fabricated product title.
 - Edit, reorder, remove, refresh and check saved data.
-- Save both printable formats as PDFs and scan the printed QR codes.
+- Generate and download both PDFs on iOS Safari and Android Chrome/Samsung Internet; verify their clickable links, QR codes, multi-page pagination, and native share options.
 - Check small mobile screens, desktop screens and the main-site proxy URL.
