@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MAX_HTML_BYTES = 750_000;
-const MAX_REDIRECTS = 3;
+const MAX_REDIRECTS = 6;
 const TIMEOUT_MS = 7000;
 
 function publicIp(ip: string): boolean {
@@ -44,6 +44,34 @@ async function validateUrl(raw: string): Promise<URL> {
   return url;
 }
 
+function isAmazonShortHost(host: string): boolean {
+  return ["a.co", "amzn.to", "amzn.eu", "amzn.asia", "amzn.com"].includes(host.toLowerCase().replace(/^www\./,""));
+}
+function isAmazonHost(host: string): boolean {
+  const name = host.toLowerCase().replace(/^www\./,"");
+  return name === "amazon.com" || /^amazon\.(?:co\.[a-z]{2}|com\.[a-z]{2}|[a-z]{2,3})$/.test(name);
+}
+function asinFromUrl(raw: string) {
+  try {
+    const u = new URL(raw), path = decodeURIComponent(u.pathname);
+    if (!isAmazonHost(u.hostname)) return "";
+    return (path.match(/\/(?:dp|gp\/product|gp\/aw\/d|exec\/obidos\/asin)\/([A-Z0-9]{10})(?:\/|$)/i) || [])[1]?.toUpperCase() || "";
+  } catch { return ""; }
+}
+function titleHintFromAmazonUrl(raw: string): string {
+  try {
+    const url = new URL(raw);
+    if (!isAmazonHost(url.hostname) || !asinFromUrl(raw)) return "";
+    const parts = url.pathname.split("/").filter(Boolean);
+    const idx = parts.findIndex(part => ["dp","gp"].includes(part.toLowerCase()));
+    if (idx < 1) return "";
+    const slug = parts[idx-1];
+    if (!slug.includes("-") || slug.length > 145) return "";
+    const words = slug.replace(/[-_]+/g," ").replace(/[^a-zA-Z0-9 +&',]/g," ").replace(/\s+/g," ").trim();
+    if (words.split(" ").length < 3) return "";
+    return words.slice(0,180);
+  } catch { return ""; }
+}
 function tidy(value: string | undefined | null, max = 180) {
   return (value || "").replace(/\s+/g, " ").trim().slice(0, max);
 }
@@ -60,29 +88,51 @@ function cleanTitle(value: string | undefined | null) {
   return title;
 }
 
-async function downloadHtml(raw: string) {
+type PageResult = { html: string; finalUrl: string; blocked: boolean; responseCode: number };
+async function downloadHtml(raw: string): Promise<PageResult> {
   let current = raw;
+  const amazonShort = isAmazonShortHost(new URL(raw).hostname);
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     const url = await validateUrl(current);
-    const response = await fetch(url.toString(), {
-      redirect: "manual",
-      cache: "no-store",
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-      headers: {
-        "Accept": "text/html,application/xhtml+xml",
-        "User-Agent": "Mozilla/5.0 (compatible; LetterToSanta/1.0; +https://www.jaredvogler.com/letter-to-santa)"
-      }
-    });
+    const amazonDestination = isAmazonHost(url.hostname);
+    // Follow only Amazon-owned destinations from Amazon short links.
+    if (amazonShort && !amazonDestination && !isAmazonShortHost(url.hostname))
+      throw new Error("Amazon short link redirected outside Amazon.");
+    // Important: a.co typically returns 404 for HEAD. Use GET with manual redirects.
+    let response: Response;
+    try {
+      response = await fetch(url.toString(), {
+        redirect: "manual",
+        cache: "no-store",
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+        headers: {
+          "Accept": "text/html,application/xhtml+xml",
+          "User-Agent": "Mozilla/5.0 (compatible; LetterToSanta/1.0; +https://www.jaredvogler.com/letter-to-santa)"
+        }
+      });
+    } catch (error) {
+      // After resolving a short link, the catalog page may refuse cloud servers.
+      // Return the known product destination, not a made-up title or broken link.
+      if (amazonShort && amazonDestination) return {html:"",finalUrl:url.toString(),blocked:true,responseCode:0};
+      throw error;
+    }
     if ([301,302,303,307,308].includes(response.status)) {
       const location = response.headers.get("location");
       if (!location) throw new Error("The retailer redirected without a destination.");
       current = new URL(location, url).toString();
       continue;
     }
-    if (!response.ok) throw new Error("The retailer did not allow us to read this product page.");
+    if (!response.ok) {
+      if (amazonShort || amazonDestination)
+        return { html:"", finalUrl:url.toString(), blocked:true, responseCode:response.status };
+      throw new Error("The retailer did not allow us to read this product page.");
+    }
     const type = response.headers.get("content-type") || "";
-    if (!/text\/html|application\/xhtml\+xml/i.test(type))
+    if (!/text\/html|application\/xhtml\+xml/i.test(type)) {
+      if (amazonShort || amazonDestination)
+        return {html:"",finalUrl:url.toString(),blocked:true,responseCode:response.status};
       throw new Error("This link does not lead to an HTML product page.");
+    }
     if (Number(response.headers.get("content-length") || "0") > MAX_HTML_BYTES)
       throw new Error("This webpage is too large to inspect.");
     const stream = response.body?.getReader();
@@ -98,7 +148,7 @@ async function downloadHtml(raw: string) {
       }
     } finally { await stream.cancel().catch(() => {}); }
     const html = new TextDecoder().decode(Buffer.concat(chunks.map(chunk => Buffer.from(chunk))));
-    return { html, finalUrl: url.toString() };
+    return {html,finalUrl:url.toString(),blocked:false,responseCode:response.status};
   }
   throw new Error("This retailer redirected too many times.");
 }
@@ -134,18 +184,21 @@ export async function POST(request: NextRequest) {
     const body: unknown = await request.json();
     if (!body || typeof body !== "object" || typeof (body as Record<string, unknown>).url !== "string")
       return NextResponse.json({ error: "Enter a product link." }, { status: 400 });
-    const { html, finalUrl } = await downloadHtml((body as {url: string}).url);
+    const { html, finalUrl, blocked, responseCode } = await downloadHtml((body as {url: string}).url);
     const $ = load(html);
     let product: {name?:string;image?:string;description?:string} | null = null;
     $('script[type="application/ld+json"]').slice(0, 15).each((_, el) => {
       if (!product) product = structuredProduct($(el).html() || "");
     });
     const structured = product as {name?:string;image?:string;description?:string} | null;
-    const title = cleanTitle(structured?.name ||
+    const extractedTitle = cleanTitle(structured?.name ||
       $('[id="productTitle"]').first().text() ||
       $('meta[property="og:title"]').attr("content") ||
       $('meta[name="twitter:title"]').attr("content") ||
       $("title").first().text());
+    const titleHint = titleHintFromAmazonUrl(finalUrl);
+    const title = extractedTitle || titleHint;
+    const source = extractedTitle ? "page" : titleHint ? "url-hint" : "unavailable";
     const description = cleanDescription(structured?.description ||
       $('meta[property="og:description"]').attr("content") ||
       $('meta[name="twitter:description"]').attr("content") ||
@@ -162,9 +215,17 @@ export async function POST(request: NextRequest) {
           imageUrl = parsedImage.toString();
       }
     } catch { /* image optional */ }
-    return NextResponse.json({ title: title || "", description, image: imageUrl, url: finalUrl }, {
-      headers: { "Cache-Control": "no-store" }
-    });
+    return NextResponse.json({
+      title, description, image: imageUrl, url: (body as {url:string}).url,
+      resolvedUrl: finalUrl,
+      asin: asinFromUrl(finalUrl),
+      source,
+      warning: source === "url-hint" ? "Name inferred from URL; please check the exact product."
+        : source === "unavailable" && (blocked || isAmazonShortHost(new URL((body as {url:string}).url).hostname))
+        ? "Amazon limited access to product details. Add the product title manually."
+        : "",
+      responseCode
+    }, {headers:{"Cache-Control":"no-store"}});
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not inspect the link.";
     return NextResponse.json({
