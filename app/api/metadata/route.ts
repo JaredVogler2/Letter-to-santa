@@ -72,6 +72,58 @@ function titleHintFromAmazonUrl(raw: string): string {
     return words.slice(0,180);
   } catch { return ""; }
 }
+/**
+ * When Amazon blocks its product page, the ASIN is still a stable exact identifier.
+ * Query public search results, and NEVER accept a result unless its destination is
+ * an Amazon product page with the same ASIN. This is best-effort, not an Amazon API.
+ * No child details, gift list or original short link are sent to search engines.
+ */
+async function indexedAmazonTitle(asin: string): Promise<string> {
+  if (!/^[A-Z0-9]{10}$/.test(asin)) return "";
+  const query = encodeURIComponent('"' + asin + '" amazon');
+  const sources = [
+    {kind:"yahoo",url:"https://search.yahoo.com/search?p=" + encodeURIComponent(asin)},
+    {kind:"bing",url:"https://www.bing.com/search?format=rss&q=" + query}
+  ] as const;
+  type Candidate={title:string;score:number};
+  const normalize = (value: string) =>
+    value.replace(/^Amazon(?:\.[a-z.]+)?\s*[:|–-]\s*/i,"")
+      .replace(/\s*[-|–]\s*Amazon(?:\.[a-z.]+)?\s*$/i,"")
+      .replace(/\s+/g," ").trim().slice(0,180);
+  const candidates:Candidate[][] = await Promise.all(sources.map(async source=>{
+    try {
+      const response = await fetch(source.url,{
+        cache:"no-store",signal:AbortSignal.timeout(4500),
+        headers:{"Accept":"text/html,application/rss+xml,application/xml","User-Agent":"Mozilla/5.0 (compatible; LetterToSanta/1.0)"}
+      });
+      if (!response.ok || Number(response.headers.get("content-length")||"0") > 150000) return [];
+      const html=(await response.text()).slice(0,150000);
+      const $=load(html,source.kind==="bing"?{xml:{xmlMode:true}}:undefined);
+      const rows:{title:string;link:string}[]=[];
+      if(source.kind==="bing"){
+        $("item").slice(0,12).each((_,el)=>rows.push({title:$(el).find("title").text(),link:$(el).find("link").text()}));
+      } else {
+        $("h3").slice(0,16).each((_,el)=>{
+          const anchor=$(el).closest("a");
+          let link=anchor.attr("href")||"";
+          // Yahoo wraps search results in a redirect URL, with the destination in /RU=...
+          const wrapped=link.match(/\/RU=([^/]+)/);
+          if(wrapped)try{link=decodeURIComponent(wrapped[1]);}catch{return;}
+          rows.push({title:$(el).text(),link});
+        });
+      }
+      return rows.flatMap(({title,link})=>{
+        if (asinFromUrl(link)!==asin) return [];
+        const name=normalize(title);
+        if(name.length < 14 || /^(?:amazon|products?|buy now|home|shop|customer reviews|page not found)\b/i.test(name)) return [];
+        return [{title:name,score:(name.includes("...")||name.includes("…")?0:60)+Math.min(name.length,160)}];
+      });
+    } catch { return []; }
+  }));
+  const all=candidates.flat().sort((a,b)=>b.score-a.score);
+  return all[0]?.title || "";
+}
+
 function tidy(value: string | undefined | null, max = 180) {
   return (value || "").replace(/\s+/g, " ").trim().slice(0, max);
 }
@@ -196,9 +248,11 @@ export async function POST(request: NextRequest) {
       $('meta[property="og:title"]').attr("content") ||
       $('meta[name="twitter:title"]').attr("content") ||
       $("title").first().text());
+    const asin = asinFromUrl(finalUrl);
     const titleHint = titleHintFromAmazonUrl(finalUrl);
-    const title = extractedTitle || titleHint;
-    const source = extractedTitle ? "page" : titleHint ? "url-hint" : "unavailable";
+    const indexedTitle = extractedTitle ? "" : await indexedAmazonTitle(asin);
+    const title = extractedTitle || indexedTitle || titleHint;
+    const source = extractedTitle ? "page" : indexedTitle ? "search" : titleHint ? "url-hint" : "unavailable";
     const description = cleanDescription(structured?.description ||
       $('meta[property="og:description"]').attr("content") ||
       $('meta[name="twitter:description"]').attr("content") ||
@@ -218,9 +272,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       title, description, image: imageUrl, url: (body as {url:string}).url,
       resolvedUrl: finalUrl,
-      asin: asinFromUrl(finalUrl),
+      asin,
       source,
-      warning: source === "url-hint" ? "Name inferred from URL; please check the exact product."
+      warning: source === "search" ? "Title recovered from indexed search results using the exact Amazon product ID; please confirm it is the right item."
+        : source === "url-hint" ? "Name inferred from URL; please check the exact product."
         : source === "unavailable" && (blocked || isAmazonShortHost(new URL((body as {url:string}).url).hostname))
         ? "Amazon limited access to product details. Add the product title manually."
         : "",
