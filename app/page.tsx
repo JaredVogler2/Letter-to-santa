@@ -119,7 +119,7 @@ export default function Home() {
     const unnamed = data.gifts.find(g => g.title === NAME_NEEDED);
     if (unnamed) {
       setEditing(current => current || unnamed.id);
-      setNotice("Some saved gift links did not provide product names. Edit the highlighted gift or try extracting its details again.");
+      setNotice("Some saved gift links need titles. Use Retry Amazon titles or edit the highlighted gift.");
     }
     // Run once after loading the previous browser-local list, preserving existing gifts.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -221,7 +221,7 @@ export default function Home() {
         : result.source === "search" ? "A title was recovered from indexed Amazon listings; please verify it." : result.source === "url-hint" ? "A name was inferred from the Amazon URL; check that it matches the gift."
         : Object.keys(patch).length ? "Updated available gift details." : "No new details found.");
     } catch {
-      setNotice("The store did not provide product details. Please enter a gift name and description manually.");
+      setNotice("The store did not provide a product title. Please enter the gift name manually.");
     } finally { setBusy(false); setEditing(gift.id); }
   }
   async function recoverAllMissing() {
@@ -241,7 +241,7 @@ export default function Home() {
         if((needsManualName(gift.title,gift.url) || gift.source === "url-hint") && name!==NAME_NEEDED && (info.source === "page" || info.source === "search" || needsManualName(gift.title,gift.url))) {
           patch.title=name;patch.source=info.source;
         }
-        // The Christmas letter needs a recognizable product title, not an automatically generated description.
+        // The Christmas letter requires a recognizable product title.
         if(!gift.image && info.image)patch.image=info.image;
         if(info.asin)patch.asin=info.asin;
         if(info.resolvedUrl)patch.resolvedUrl=info.resolvedUrl;
@@ -252,7 +252,7 @@ export default function Home() {
     setBusy(false);
     setNotice(improved
       ? "Recovered titles for " + improved + " Amazon link(s). " + unavailable + " could not be identified automatically."
-      : "No new product titles were available. Your Amazon gift URLs and QR codes are preserved.");
+      : "No new product titles were available. Your Amazon gift links and QR codes are preserved. You can enter a name manually.");
   }
   async function pasteLink() {
     try { const value = await navigator.clipboard.readText(); setUrlInput(value.trim()); }
@@ -330,7 +330,7 @@ export default function Home() {
           <div className="addActions"><button className="pasteBtn" type="button" onClick={pasteLink}><Symbol name="copy"/> Paste link</button><button className="primaryBtn" type="submit" disabled={busy}><Symbol name="magic"/> {busy ? "Finding the gift…" : "Add to my list"} <span aria-hidden="true">→</span></button></div>
         </form>
         {notice && <div className="notice" role="status">{notice} <button type="button" onClick={() => setNotice("")} aria-label="Dismiss notification">×</button></div>}
-        <div className="wishListHeader"><div><span className="stepLabel">YOUR CHRISTMAS WISHES</span><h3>My wish list <b>{data.gifts.length}</b></h3></div>{data.gifts.length > 0 && <div className="listTools"><button type="button" className="textAction" onClick={recoverAllMissing} disabled={busy}>↻ Retry Amazon details</button><button type="button" className="textAction" onClick={copyList}><Symbol name="copy"/> Copy links</button></div>}</div>
+        <div className="wishListHeader"><div><span className="stepLabel">YOUR CHRISTMAS WISHES</span><h3>My wish list <b>{data.gifts.length}</b></h3></div>{data.gifts.length > 0 && <div className="listTools"><button type="button" className="textAction" onClick={recoverAllMissing} disabled={busy}>↻ Retry Amazon titles</button><button type="button" className="textAction" onClick={copyList}><Symbol name="copy"/> Copy links</button></div>}</div>
         {!data.gifts.length && <div className="emptyState"><span>🎄</span><strong>The wish list starts here.</strong><p>Find something wonderful online, copy the link, and paste it above.</p></div>}
         <div className="giftList">{data.gifts.map((gift,i) => <article className="giftCard" key={gift.id}>
           <div className="giftCardMain">
@@ -343,8 +343,8 @@ export default function Home() {
           
           <label className="field"><span>Extra details <small>(size, color, etc.)</small></span><input maxLength={160} placeholder="e.g. Blue, size 5" value={gift.note} onChange={e=>updateGift(gift.id,{note:e.target.value})}/></label>
           <label className="field"><span>Wish importance</span><select value={gift.priority} onChange={e=>updateGift(gift.id,{priority:e.target.value as Gift["priority"]})}><option value="wish">Would love</option><option value="top">Top wish ★</option></select></label>
-          <button className="outlineBtn refreshDetails" type="button" disabled={busy} onClick={()=>refreshGift(gift)}>↻ Try extracting product details again</button>
-          <div className="editUrlHint">Shopping link: <a href={gift.url} target="_blank" rel="noopener noreferrer">{gift.url}</a>{gift.asin && <p>Amazon product ID: <strong>{gift.asin}</strong></p>}{gift.resolvedUrl && gift.resolvedUrl !== gift.url && <p>Resolved destination: <a href={gift.resolvedUrl} target="_blank" rel="noopener noreferrer">{gift.resolvedUrl}</a></p>}<p>If Amazon blocks product details, open the link, copy the product name, and paste it above. The QR code will still link to the gift.</p>{gift.asin && <a className="asinSearch" href={"https://www.google.com/search?q=" + encodeURIComponent("Amazon " + gift.asin)} target="_blank" rel="noopener noreferrer">Search this product ID to help identify the gift ↗</a>}</div>
+          <button className="outlineBtn refreshDetails" type="button" disabled={busy} onClick={()=>refreshGift(gift)}>↻ Retry product title lookup</button>
+          <div className="editUrlHint">Shopping link: <a href={gift.url} target="_blank" rel="noopener noreferrer">{gift.url}</a>{gift.asin && <p>Amazon product ID: <strong>{gift.asin}</strong></p>}{gift.resolvedUrl && gift.resolvedUrl !== gift.url && <p>Resolved destination: <a href={gift.resolvedUrl} target="_blank" rel="noopener noreferrer">{gift.resolvedUrl}</a></p>}<p>If automatic title lookup fails, open the Amazon link and copy the gift name into the field above. The QR code will still link to the gift.</p>{gift.asin && <a className="asinSearch" href={"https://www.google.com/search?q=" + encodeURIComponent("Amazon " + gift.asin)} target="_blank" rel="noopener noreferrer">Search this product ID to help identify the gift ↗</a>}</div>
           </div>}
         </article>)}</div>
         <div className="actionPanel">
