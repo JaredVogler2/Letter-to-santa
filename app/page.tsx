@@ -83,6 +83,17 @@ export default function Home() {
 
   useEffect(() => {
     if (!loaded) return;
+    const unnamed = data.gifts.find(g => g.title === NAME_NEEDED);
+    if (unnamed) {
+      setEditing(current => current || unnamed.id);
+      setNotice("Some saved gift links did not provide product names. Edit the highlighted gift or try extracting its details again.");
+    }
+    // Run once after loading the previous browser-local list, preserving existing gifts.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded]);
+
+  useEffect(() => {
+    if (!loaded) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       try { window.localStorage.setItem(STORAGE, JSON.stringify(data)); } catch { /* private browsing */ }
