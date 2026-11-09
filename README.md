@@ -8,8 +8,10 @@ A festive mobile-friendly Christmas letter builder. Paste a gift URL, retrieve i
 ## Features
 
 - Child's first name, optional age, and custom note for Santa
-- Paste HTTPS gift links; best-effort automatic product title, description and image extraction
-- Fallback manual name and description editing for retailers that block metadata lookup (including Amazon short links); no misleading random URL tokens as names
+- Paste HTTPS gift links; best-effort automatic product **title** retrieval (description is not required)
+- Amazon a.co share links resolve to product ASINs, then try an indexed title lookup when Amazon blocks its catalog page; indexed titles must link to the exact same ASIN
+- Previously saved Amazon gifts can be rechecked with **Retry Amazon titles** without losing their original links
+- Manual title editing is available when neither the retailer nor indexed listings expose a recognizable name; never show an opaque short-code as the product name
 - Edit a gift's name, size/color note and top-wish priority; reorder or remove entries
 - One real QR code per gift, encoding the actual product URL
 - Live letter preview with gift descriptions and full, clickable HTTPS product URLs beneath each gift, alongside the QR codes
@@ -46,12 +48,13 @@ The parent website repository JaredVogler2/Jaredvoglercom has a Side Quest page,
 
 ## Privacy and limitations
 
-Wish lists and child names are saved only in this browser's localStorage; no accounts or database. A pasted URL alone is submitted to the metadata endpoint, where the server briefly requests the retailer website. Retailers may log those requests. The endpoint validates HTTPS URLs, DNS addresses, redirects and response size/timeouts to reduce unsafe outbound requests. The product title and image are best effort: shops may block automated lookup or hotlinked images, so manual editing is essential. QR codes contain submitted URLs and are generated locally with no shortener. The PDF save button uses browser printing; choose Save as PDF. Browser storage doesn't synchronize between devices.
+Wish lists and child names are saved only in this browser's localStorage; no accounts or database. A pasted URL alone is submitted to the metadata endpoint, where the server briefly requests the retailer website. For Amazon links, when the retailer page is blocked, the server may search a public Yahoo/Bing listing using **only the ASIN**; neither the child's name nor the entire list is sent to the search provider. Retailers may log those requests. The endpoint validates HTTPS URLs, DNS addresses, redirects and response size/timeouts to reduce unsafe outbound requests. The product title and image are best effort: shops may block automated lookup or hotlinked images, so manual editing is essential. QR codes contain submitted URLs and are generated locally with no shortener. The PDF save button uses browser printing; choose Save as PDF. Browser storage doesn't synchronize between devices.
 
 ## Check before seasonal use
 
 - Create an actual wishlist and ensure each gift QR and the clickable printed/PDF URL open the correct site.
-- Test an Amazon a.co short URL that returns no product metadata; confirm a clear editing prompt instead of a fabricated product title.
+- Test an Amazon a.co short URL that redirects to an Amazon ASIN; confirm a title is retrieved only from a result whose Amazon link contains the exact matching ASIN.
+- If Amazon and indexed listings do not provide an actual product title, confirm a clear editing prompt instead of a fabricated product title.
 - Edit, reorder, remove, refresh and check saved data.
 - Save both printable formats as PDFs and scan the printed QR codes.
 - Check small mobile screens, desktop screens and the main-site proxy URL.
