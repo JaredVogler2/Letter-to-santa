@@ -7,6 +7,11 @@
 
 /* Gift descriptions and real tappable URLs: visible on phone, in PDF, and in a browser email. */
 .missingGiftName{color:#a33234!important;font-style:italic}
+.amazonHint{margin:8px 1px 0;color:#765e48;font-size:10px;line-height:1.5}
+.listTools{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.listTools .textAction{font-size:10px;background:#fffaf3;border-radius:5px;padding:5px 8px}
+.inferredHint{color:#a45c27!important;font-size:10px!important;margin-top:4px}
+@media(max-width:780px){.wishListHeader{gap:8px;align-items:flex-start}.listTools{flex-direction:column;align-items:flex-end}.listTools button{min-height:30px}.editUrlHint{line-height:1.65}}
 .giftInfoDescription{font-size:11px;color:#65584c;line-height:1.45;margin:5px 0;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;line-clamp:3;overflow:hidden}
 .giftEdit .field textarea{min-height:74px;width:100%}
 .giftEdit .refreshDetails{margin-top:2px;font-size:11px;width:100%}
