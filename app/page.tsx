@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 
-type Gift = { id: string; url: string; title: string; image: string; note: string; priority: "top" | "wish" };
+type Gift = { id: string; url: string; title: string; description: string; image: string; note: string; priority: "top" | "wish" };
 type LetterData = { name: string; age: string; message: string; gifts: Gift[] };
 type PrintMode = "letter" | "shop";
 const STORAGE = "letter-to-santa-v1";
@@ -15,11 +15,25 @@ function safeUrl(raw: string) {
 }
 function domain(url: string) { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return "Gift website"; } }
 function newId() { return globalThis.crypto?.randomUUID?.() || String(Date.now()) + "-" + Math.random().toString(36).slice(2); }
-function defaultTitle(url: string) {
+const NAME_NEEDED = "Gift name needed";
+function needsManualName(title: string, url: string): boolean {
+  const value = title.trim();
+  if (!value || value === NAME_NEEDED) return true;
+  if (/^(amazon(?:\.[a-z]{2,4})+|a\.co|amzn\.to|product|shop|home|access denied|robot check|just a moment)[\s:.,!-]*$/i.test(value)) return true;
+  if (/^(page not found|404|captcha|are you a robot|something went wrong)/i.test(value)) return true;
+  let host = "", shortCode = "";
   try {
-    const path = decodeURIComponent(new URL(url).pathname.split("/").filter(Boolean).pop() || "");
-    return path.replace(/\.(html|htm)$/, "").replace(/[-_]/g, " ").replace(/\s+/g, " ").trim().slice(0, 90) || "New Christmas wish";
-  } catch { return "New Christmas wish"; }
+    const target = new URL(url);
+    host = target.hostname.toLowerCase();
+    shortCode = decodeURIComponent(target.pathname.split("/").filter(Boolean).pop() || "");
+  } catch { return false; }
+  if (/^(a\.co|amzn\.to|bit\.ly|tinyurl\.com|t\.co)$/.test(host)) {
+    if (value.toLowerCase() === shortCode.toLowerCase() || (/^[a-z\d_-]{5,18}$/i.test(value) && !/\s/.test(value))) return true;
+  }
+  return false;
+}
+function cleanGiftTitle(title: string, url: string) {
+  return needsManualName(title, url) ? NAME_NEEDED : title.trim().slice(0,180);
 }
 function Symbol({ name }: { name: string }) {
   const icons: Record<string,string> = { gift:"🎁", magic:"✦", print:"▤", arrow:"↗", link:"↗", down:"↓", up:"↑", remove:"×", copy:"⧉", santa:"✉", star:"✳", check:"✓" };
@@ -55,7 +69,8 @@ export default function Home() {
             message: typeof stored.message === "string" ? stored.message.slice(0,400) : "",
             gifts: stored.gifts.filter(g => g && typeof g.url === "string" && safeUrl(g.url)).slice(0,50).map(g => ({
               id: typeof g.id === "string" ? g.id : newId(),
-              url: g.url, title: String(g.title || "Christmas wish").slice(0,180),
+              url: g.url, title: cleanGiftTitle(String(g.title || ""),g.url),
+              description: String(g.description || "").slice(0,350),
               image: String(g.image || "").slice(0,2000), note: String(g.note || "").slice(0,160),
               priority: g.priority === "top" ? "top" : "wish"
             }))
@@ -101,29 +116,77 @@ export default function Home() {
     if (data.gifts.length >= 50) { setNotice("A letter can contain up to 50 gifts."); return; }
     if (data.gifts.some(g => g.url === url)) { setNotice("That gift is already on the list."); return; }
     setBusy(true); setNotice("");
-    let title = defaultTitle(url), image = "";
+    let title = NAME_NEEDED, image = "", description = "";
     try {
       const response = await fetch("/letter-to-santa/api/metadata", {
         method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({url})
       });
-      const result: {title?:string;image?:string;error?:string} = await response.json();
-      if (response.ok && result.title) title = result.title;
-      if (response.ok && result.image) image = result.image;
-      if (!response.ok) setNotice("Gift added. The shop blocked title extraction, so you can edit its name below.");
-    } catch { setNotice("Gift added. You can edit its title below."); }
+      const result: {title?:string;description?:string;image?:string;error?:string} = await response.json();
+      if (response.ok) {
+        title = cleanGiftTitle(result.title || "", url);
+        description = (result.description || "").slice(0,350);
+        image = result.image || "";
+      }
+    } catch { /* Retailer metadata is best-effort. Never generate names from opaque short URLs. */ }
     const id = newId();
-    setData(current => ({ ...current, gifts: [...current.gifts, {id,url,title,image,note:"",priority:"wish"}] }));
+    setData(current => ({ ...current, gifts: [...current.gifts, {id,url,title,description,image,note:"",priority:"wish"}] }));
+    if (title === NAME_NEEDED) {
+      setEditing(id);
+      setNotice("This store did not provide a product name. Edit the new gift below to add its name and description.");
+    } else if (!description) {
+      setEditing(id);
+      setNotice("Gift added! Add an optional description to help family recognize the exact item.");
+    }
     setUrlInput(""); setBusy(false);
+  }
+  async function refreshGift(gift: Gift) {
+    setBusy(true); setNotice("");
+    try {
+      const response = await fetch("/letter-to-santa/api/metadata", {
+        method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({url:gift.url})
+      });
+      const result: {title?:string;description?:string;image?:string;error?:string} = await response.json();
+      if (!response.ok) throw new Error(result.error || "The store blocked product lookup.");
+      const newName = cleanGiftTitle(result.title || "",gift.url);
+      const patch: Partial<Gift> = {};
+      if (newName !== NAME_NEEDED && (gift.title === NAME_NEEDED || needsManualName(gift.title,gift.url))) patch.title=newName;
+      if (result.description && !gift.description.trim()) patch.description=result.description.slice(0,350);
+      if (result.image && !gift.image) patch.image=result.image;
+      if (Object.keys(patch).length) updateGift(gift.id,patch);
+      setNotice(Object.keys(patch).length ? "Updated available gift details." : "No new details found. You can enter the gift name and description yourself.");
+    } catch {
+      setNotice("The store did not provide product details. Please enter a gift name and description manually.");
+    } finally { setBusy(false); setEditing(gift.id); }
   }
   async function pasteLink() {
     try { const value = await navigator.clipboard.readText(); setUrlInput(value.trim()); }
     catch { setNotice("Use the URL field to paste your copied link."); }
   }
   async function copyList() {
-    const content = data.gifts.map((g,i) => String(i + 1) + ". " + g.title + "\n" + g.url + (g.note ? "\nNote: " + g.note : "")).join("\n\n");
+    const content = data.gifts.map((g,i) => String(i + 1) + ". " + g.title
+      + (g.description ? "\n" + g.description : "")
+      + (g.note ? "\nDetails: " + g.note : "")
+      + "\n" + g.url).join("\n\n");
     if (!content) { setNotice("Add a gift before copying your shopping list."); return; }
     try { await navigator.clipboard.writeText((data.name || "Christmas") + " wish list\n\n" + content); setNotice("Shopping list copied!"); }
     catch { setNotice("Couldn't copy automatically. Try printing the shopping list."); }
+  }
+  function emailList() {
+    if (!data.gifts.length) { setNotice("Add a gift before emailing the list."); return; }
+    const name = data.name.trim() || "Christmas";
+    const items = data.gifts.map((g,i) => [
+      String(i+1) + ". " + g.title,
+      g.description.trim(),
+      g.note.trim() ? "Details: " + g.note.trim() : "",
+      "Gift link: " + g.url
+    ].filter(Boolean).join("\n")).join("\n\n");
+    const subject = name + "'s Christmas wish list";
+    const body = "Here are " + name + "'s Christmas wishes, with links you can tap directly from your phone:\n\n" + items;
+    if (body.length > 6000) {
+      setNotice("This list is long for an email link. Use Copy links to paste the complete list into your email.");
+      return;
+    }
+    window.location.href = "mailto:?subject=" + encodeURIComponent(subject) + "&body=" + encodeURIComponent(body);
   }
   function print(which: PrintMode) {
     if (!data.gifts.length) { setNotice("Add at least one gift first."); return; }
@@ -175,16 +238,23 @@ export default function Home() {
         <div className="giftList">{data.gifts.map((gift,i) => <article className="giftCard" key={gift.id}>
           <div className="giftCardMain">
             <div className="giftIndex">{String(i+1).padStart(2,"0")}</div><div className="giftPic"><GiftIllustration gift={gift}/></div>
-            <div className="giftInfo"><h4>{gift.title}</h4><small>{domain(gift.url)}</small><a href={gift.url} target="_blank" rel="noopener noreferrer" className="giftLink">Open gift <Symbol name="arrow"/></a></div>
+            <div className="giftInfo"><h4 className={gift.title === NAME_NEEDED ? "missingGiftName" : ""}>{gift.title}</h4>{gift.description && <p className="giftInfoDescription">{gift.description}</p>}<small>{domain(gift.url)}</small><a href={gift.url} target="_blank" rel="noopener noreferrer" className="giftLink">Open gift <Symbol name="arrow"/></a></div>
             <div className="giftQrSmall"><GiftQR gift={gift} size={66}/></div>
           </div>
           <div className="giftCardTools"><button type="button" onClick={() => setEditing(editing === gift.id ? null : gift.id)}>{editing === gift.id ? "Done editing" : "✎ Edit gift"}</button><button type="button" onClick={() => moveGift(gift.id,-1)} disabled={i===0} aria-label={"Move " + gift.title + " up"}>↑</button><button type="button" onClick={() => moveGift(gift.id,1)} disabled={i===data.gifts.length-1} aria-label={"Move " + gift.title + " down"}>↓</button><button type="button" className="deleteBtn" onClick={() => removeGift(gift.id)} aria-label={"Remove " + gift.title}>✕</button></div>
-          {editing === gift.id && <div className="giftEdit"><label className="field"><span>Gift name</span><input maxLength={180} value={gift.title} onChange={e=>updateGift(gift.id,{title:e.target.value})}/></label><label className="field"><span>Little detail <small>(size, color, etc.)</small></span><input maxLength={160} placeholder="e.g. Blue, size 5" value={gift.note} onChange={e=>updateGift(gift.id,{note:e.target.value})}/></label><label className="field"><span>Wish importance</span><select value={gift.priority} onChange={e=>updateGift(gift.id,{priority:e.target.value as Gift["priority"]})}><option value="wish">Would love</option><option value="top">Top wish ★</option></select></label></div>}
+          {editing === gift.id && <div className="giftEdit"><label className="field"><span>Gift name <small>(required to identify a gift)</small></span><input maxLength={180} placeholder="e.g. LEGO City Fire Station" value={gift.title === NAME_NEEDED ? "" : gift.title} onChange={e=>updateGift(gift.id,{title:e.target.value.slice(0,180)})}/></label>
+          <label className="field"><span>Gift description <small>(appears in the letter and email)</small></span><textarea rows={3} maxLength={350} placeholder="What is it? Brand, color, features or what makes it special." value={gift.description} onChange={e=>updateGift(gift.id,{description:e.target.value})}/></label>
+          <label className="field"><span>Extra details <small>(size, color, etc.)</small></span><input maxLength={160} placeholder="e.g. Blue, size 5" value={gift.note} onChange={e=>updateGift(gift.id,{note:e.target.value})}/></label>
+          <label className="field"><span>Wish importance</span><select value={gift.priority} onChange={e=>updateGift(gift.id,{priority:e.target.value as Gift["priority"]})}><option value="wish">Would love</option><option value="top">Top wish ★</option></select></label>
+          <button className="outlineBtn refreshDetails" type="button" disabled={busy} onClick={()=>refreshGift(gift)}>↻ Try extracting product details again</button>
+          <div className="editUrlHint">Link in the letter: <a href={gift.url} target="_blank" rel="noopener noreferrer">{gift.url}</a></div>
+          </div>}
         </article>)}</div>
         <div className="actionPanel">
           <div className="actionIntro"><span aria-hidden="true">✉</span><div><h3>Ready for the North Pole?</h3><p>Your letter is saved privately in this browser.</p></div></div>
           <button type="button" className="primaryBtn fullBtn" onClick={() => print("letter")}><Symbol name="print"/> Print / Save letter as PDF</button>
           <button type="button" className="outlineBtn fullBtn" onClick={() => print("shop")}><Symbol name="gift"/> Print parent shopping sheet</button>
+          <button type="button" className="outlineBtn fullBtn emailBtn" onClick={emailList}>✉ Email wish list with clickable links</button>
           <div className="lowerActions"><button type="button" onClick={() => {setActivePanel("preview"); window.scrollTo({top:0,behavior:"smooth"});}}>See letter preview →</button><button type="button" onClick={clearLetter}>Start new letter</button></div>
         </div>
       </div>
@@ -193,8 +263,8 @@ export default function Home() {
         <div className="paperWrap">
           <LetterPaper name={childName} age={data.age} greeting={greeting} gifts={data.gifts}/>
         </div>
-        <div className="previewHelp"><span aria-hidden="true">✦</span><p>Every QR code opens the original gift website. Print for Santa or share the PDF with family!</p></div>
-        <div className="previewButtons"><button className="primaryBtn fullBtn" onClick={() => print("letter")}>▤ Print / Save PDF</button><button className="outlineBtn fullBtn" onClick={copyList}>⧉ Copy gift links</button></div>
+        <div className="previewHelp"><span aria-hidden="true">✦</span><p>Every gift now has a tappable link under its description as well as a QR code. Links also appear in saved PDFs and email drafts.</p></div>
+        <div className="previewButtons"><button className="primaryBtn fullBtn" onClick={() => print("letter")}>▤ Print / Save PDF</button><button className="outlineBtn fullBtn" onClick={emailList}>✉ Email clickable links</button><button className="outlineBtn fullBtn" onClick={copyList}>⧉ Copy gift links</button></div>
       </div>
     </div>
     <footer className="pageFooter"><span>Made with ♥ and a little North Pole magic.</span><span>Private by design · No account needed · Free to use</span><a href="https://www.jaredvogler.com">JaredVogler.com ↗</a></footer>
@@ -211,7 +281,7 @@ function LetterPaper({name, age, greeting, gifts}:{name:string;age:string;greeti
       <div className="letterBody"><p>My name is <strong>{name}</strong>{age.trim() && <> and I’m <strong>{age.trim()}</strong> years old</>}. I’m writing you a special Christmas letter!</p><p>{greeting}</p></div>
       <div className="wishesTitle"><span>✧</span><h3>My Christmas Wishes</h3><span>✧</span></div>
       {gifts.length ? <div className="paperGifts">{gifts.map((gift,i) => <div className="paperGift" key={gift.id}>
-        <div className="paperGiftNumber">{i+1}.</div><div className="paperGiftContent"><div className="paperGiftName">{gift.title}{gift.priority === "top" && <span className="topStar" aria-label="Top wish"> ★</span>}</div>{gift.note && <div className="paperGiftNote">{gift.note}</div>}<div className="paperGiftDomain">{domain(gift.url)}</div></div><GiftQR gift={gift} size={73}/></div>)}</div> : <div className="paperEmpty"><p>My wishes will appear here, like magic...</p><div>✧　 ✦　 ✧</div></div>}
+        <div className="paperGiftNumber">{i+1}.</div><div className="paperGiftContent"><div className="paperGiftName">{gift.title.trim() || NAME_NEEDED}{gift.priority === "top" && <span className="topStar" aria-label="Top wish"> ★</span>}</div>{gift.description && <p className="paperGiftDescription">{gift.description}</p>}{gift.note && <div className="paperGiftNote">{gift.note}</div>}<a className="paperGiftUrl" href={gift.url} target="_blank" rel="noopener noreferrer" title={"Open " + gift.title}>{gift.url}</a></div><GiftQR gift={gift} size={73}/></div>)}</div> : <div className="paperEmpty"><p>My wishes will appear here, like magic...</p><div>✧　 ✦　 ✧</div></div>}
       <div className="paperClosing"><p>Thank you, Santa!</p><span>With love,</span><strong>{name}</strong><b>♡</b></div>
       <div className="paperBottom"><span>❄</span><span>✦ · from the heart to the North Pole · ✦</span><span>❄</span></div>
     </div>
@@ -220,5 +290,5 @@ function LetterPaper({name, age, greeting, gifts}:{name:string;age:string;greeti
 
 function ShoppingPaper({name,gifts}:{name:string;gifts:Gift[]}) {
   return <div className="shoppingPaper"><div className="shoppingTop">✦ THE ELF SHOPPING DESK ✦</div><h1>{name === "_______________" ? "Christmas" : name + "’s"} Gift Guide</h1><p className="shoppingIntro">A practical little cheat sheet for Santa’s helpers. Scan a QR code to open the gift link, or use the printed website address.</p>
-    <div className="shoppingRows">{gifts.map((gift,i) => <div className="shoppingRow" key={gift.id}><div className="shoppingNum">{String(i+1).padStart(2,"0")}</div><div className="shoppingDetails"><h2>{gift.title}{gift.priority === "top" && <span> ★ Top wish</span>}</h2>{gift.note && <p>{gift.note}</p>}<p>{domain(gift.url)}</p><div className="printedUrl">{gift.url}</div></div><GiftQR gift={gift} size={95}/></div>)}</div><div className="shoppingFooter">Made at JaredVogler.com/letter-to-santa</div></div>;
+    <div className="shoppingRows">{gifts.map((gift,i) => <div className="shoppingRow" key={gift.id}><div className="shoppingNum">{String(i+1).padStart(2,"0")}</div><div className="shoppingDetails"><h2>{gift.title.trim() || NAME_NEEDED}{gift.priority === "top" && <span> ★ Top wish</span>}</h2>{gift.description && <p className="shoppingDescription">{gift.description}</p>}{gift.note && <p>{gift.note}</p>}<a className="printedUrl" href={gift.url} target="_blank" rel="noopener noreferrer">{gift.url}</a></div><GiftQR gift={gift} size={95}/></div>)}</div><div className="shoppingFooter">Made at JaredVogler.com/letter-to-santa</div></div>;
 }
