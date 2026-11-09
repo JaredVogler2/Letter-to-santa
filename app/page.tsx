@@ -14,6 +14,7 @@ type GiftLookup = {
 };
 type LetterData = { name: string; age: string; message: string; gifts: Gift[] };
 type PrintMode = "letter" | "shop";
+type PdfReady = { url:string; blob:Blob; filename:string; kind:PrintMode };
 const STORAGE = "letter-to-santa-v1";
 const initial: LetterData = { name: "", age: "", message: "", gifts: [] };
 
@@ -85,7 +86,21 @@ export default function Home() {
   const [activePanel, setActivePanel] = useState<"edit"|"preview">("edit");
   const [printMode, setPrintMode] = useState<PrintMode>("letter");
   const [editing, setEditing] = useState<string | null>(null);
+  const [pdfBusy,setPdfBusy] = useState(false);
+  const [pdfReady,setPdfReady] = useState<PdfReady | null>(null);
+  const [fileSharing,setFileSharing] = useState(false);
+  const [shareSupported,setShareSupported] = useState(false);
+  const pdfUrlRef = useRef<string | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(()=>{
+    setShareSupported(typeof navigator!=="undefined" && typeof navigator.share==="function" && typeof navigator.canShare==="function");
+    return ()=>{if(pdfUrlRef.current) URL.revokeObjectURL(pdfUrlRef.current);};
+  },[]);
+  useEffect(()=>{
+    // Never offer an out-of-date PDF after a gift is edited/removed.
+    setPdfReady(null);
+    if(pdfUrlRef.current){URL.revokeObjectURL(pdfUrlRef.current);pdfUrlRef.current=null;}
+  },[data]);
 
   useEffect(() => {
     try {
@@ -284,10 +299,38 @@ export default function Home() {
     }
     window.location.href = "mailto:?subject=" + encodeURIComponent(subject) + "&body=" + encodeURIComponent(body);
   }
-  function print(which: PrintMode) {
-    if (!data.gifts.length) { setNotice("Add at least one gift first."); return; }
-    setPrintMode(which);
-    window.setTimeout(() => window.print(), 100);
+  async function generatePdf(which:PrintMode) {
+    if(!data.gifts.length){setNotice("Add at least one gift first.");return;}
+    if(pdfBusy)return;
+    setPdfBusy(true);setPdfReady(null);setNotice("");
+    try{
+      const {buildSantaPdf}=await import("../lib/pdfExport");
+      const blob=await buildSantaPdf(data,which);
+      const slug=(data.name.trim()||"christmas").normalize("NFKD").replace(/[^a-zA-Z0-9]+/g,"-").replace(/^-|-$/g,"").toLowerCase().slice(0,40)||"christmas";
+      const filename=slug+(which==="letter"?"-letter-to-santa.pdf":"-shopping-list.pdf");
+      if(pdfUrlRef.current) URL.revokeObjectURL(pdfUrlRef.current);
+      const url=URL.createObjectURL(blob);pdfUrlRef.current=url;
+      setPdfReady({blob,url,filename,kind:which});
+      setPrintMode(which);
+      setNotice("Your PDF is ready. Use Open PDF, Download PDF, or Share PDF below.");
+    }catch(error){
+      console.error("Santa PDF export error",error);
+      setNotice("Could not create the PDF. Please try again or open the site in Safari / Chrome. Your wish list is still saved.");
+    }finally{setPdfBusy(false);}
+  }
+  async function sharePdf(){
+    if(!pdfReady)return;
+    const file=new File([pdfReady.blob],pdfReady.filename,{type:"application/pdf"});
+    if(!navigator.share||!navigator.canShare?.({files:[file]})){
+      setNotice("File sharing isn't supported by this browser. Use Open PDF or Download PDF instead.");
+      return;
+    }
+    setFileSharing(true);
+    try{
+      await navigator.share({title:pdfReady.filename,files:[file]});
+    }catch(e){
+      if(e instanceof Error && e.name!=="AbortError")setNotice("Sharing failed. Use Open PDF or Download PDF instead.");
+    }finally{setFileSharing(false);}
   }
   function clearLetter() {
     if (window.confirm("Start a new letter? This clears the current wish list saved in this browser.")) {
@@ -349,8 +392,10 @@ export default function Home() {
         </article>)}</div>
         <div className="actionPanel">
           <div className="actionIntro"><span aria-hidden="true">✉</span><div><h3>Ready for the North Pole?</h3><p>Your letter is saved privately in this browser.</p></div></div>
-          <button type="button" className="primaryBtn fullBtn" onClick={() => print("letter")}><Symbol name="print"/> Print / Save letter as PDF</button>
-          <button type="button" className="outlineBtn fullBtn" onClick={() => print("shop")}><Symbol name="gift"/> Print parent shopping sheet</button>
+          <button type="button" className="primaryBtn fullBtn" disabled={pdfBusy} onClick={() => generatePdf("letter")}><Symbol name="print"/> {pdfBusy?"Creating PDF…":"Generate Santa letter PDF"}</button>
+          <button type="button" className="outlineBtn fullBtn" disabled={pdfBusy} onClick={() => generatePdf("shop")}><Symbol name="gift"/> Generate parent shopping PDF</button>
+          {pdfReady && <PdfDownloadLinks ready={pdfReady} canShare={shareSupported} onShare={sharePdf} sharing={fileSharing}/>}
+          <p className="pdfPlatformHint">Works on iPhone (Safari) and Samsung Android (Chrome/Samsung Internet). No browser print dialog required.</p>
           <button type="button" className="outlineBtn fullBtn emailBtn" onClick={emailList}>✉ Email wish list with clickable links</button>
           <div className="lowerActions"><button type="button" onClick={() => {setActivePanel("preview"); window.scrollTo({top:0,behavior:"smooth"});}}>See letter preview →</button><button type="button" onClick={clearLetter}>Start new letter</button></div>
         </div>
@@ -361,12 +406,25 @@ export default function Home() {
           <LetterPaper name={childName} age={data.age} greeting={greeting} gifts={data.gifts}/>
         </div>
         <div className="previewHelp"><span aria-hidden="true">✦</span><p>Every gift shows its title with a tappable shopping link and QR code, including on saved PDFs and email drafts.</p></div>
-        <div className="previewButtons"><button className="primaryBtn fullBtn" onClick={() => print("letter")}>▤ Print / Save PDF</button><button className="outlineBtn fullBtn" onClick={emailList}>✉ Email clickable links</button><button className="outlineBtn fullBtn" onClick={copyList}>⧉ Copy gift links</button></div>
+        <div className="previewButtons"><button className="primaryBtn fullBtn" disabled={pdfBusy} onClick={() => generatePdf("letter")}>{pdfBusy?"Creating PDF…":"▤ Generate Santa PDF"}</button><button className="outlineBtn fullBtn" onClick={emailList}>✉ Email clickable links</button><button className="outlineBtn fullBtn" onClick={copyList}>⧉ Copy gift links</button></div>
+        {pdfReady && <PdfDownloadLinks ready={pdfReady} canShare={shareSupported} onShare={sharePdf} sharing={fileSharing}/>}
       </div>
     </div>
     <footer className="pageFooter"><span>Made with ♥ and a little North Pole magic.</span><span>Private by design · No account needed · Free to use</span><a href="https://www.jaredvogler.com">JaredVogler.com ↗</a></footer>
     <div className="printOnly"><div className={printMode === "letter" ? "" : "noPrint"}><LetterPaper name={childName} age={data.age} greeting={greeting} gifts={data.gifts}/></div><div className={printMode === "shop" ? "" : "noPrint"}><ShoppingPaper name={childName} gifts={data.gifts}/></div></div>
   </main>;
+}
+
+function PdfDownloadLinks({ready,canShare,onShare,sharing}:{ready:PdfReady;canShare:boolean;onShare:()=>void;sharing:boolean}){
+  return <section className="pdfReadyPanel" aria-live="polite">
+    <strong>✓ Your {ready.kind==="letter"?"Santa letter":"parent shopping sheet"} PDF is ready</strong>
+    <div className="pdfReadyActions">
+      <a className="primaryBtn" href={ready.url} download={ready.filename} type="application/pdf">↓ Download PDF</a>
+      <a className="outlineBtn" href={ready.url} target="_blank" rel="noopener noreferrer" type="application/pdf">↗ Open PDF</a>
+      {canShare && <button type="button" className="outlineBtn" onClick={onShare} disabled={sharing}>{sharing?"Sharing…":"✉ Share PDF"}</button>}
+    </div>
+    <p>iPhone: tap <b>Open PDF</b>, then the Share button to Save to Files or Print. Samsung: tap <b>Download PDF</b> or <b>Share PDF</b>. If your in-app browser blocks files, open this website in Safari, Chrome, or Samsung Internet.</p>
+  </section>;
 }
 
 function LetterPaper({name, age, greeting, gifts}:{name:string;age:string;greeting:string;gifts:Gift[]}) {
